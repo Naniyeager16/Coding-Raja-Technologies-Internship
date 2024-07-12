@@ -1,0 +1,60 @@
+import pandas as pd
+from surprise import Reader, Dataset, SVD
+from surprise.model_selection import train_test_split
+from surprise import accuracy
+from flask import Flask, request, jsonify
+
+# Load the dataset
+ratings = pd.read_csv('ratings.csv')
+movies = pd.read_csv('movies.csv')
+
+# Data Preprocessing
+# Create user-item matrix
+user_item_matrix = ratings.pivot(index='userId', columns='movieId', values='rating')
+
+# Load the dataset into surprise
+reader = Reader(rating_scale=(0.5, 5))
+data = Dataset.load_from_df(ratings[['userId', 'movieId', 'rating']], reader)
+
+# Split the data into training and testing sets
+trainset, testset = train_test_split(data, test_size=0.2)
+
+# Use the SVD algorithm
+algo = SVD()
+algo.fit(trainset)
+predictions = algo.test(testset)
+
+# Evaluate the model
+print("RMSE:", accuracy.rmse(predictions))
+
+# Function to get top-N recommendations
+def get_top_n_recommendations(user_id, n=10):
+    # Get a list of all movie IDs
+    movie_ids = user_item_matrix.columns
+    
+    # Predict ratings for all movies
+    predictions = [algo.predict(user_id, movie_id) for movie_id in movie_ids]
+    
+    # Sort predictions by estimated rating
+    predictions.sort(key=lambda x: x.est, reverse=True)
+    
+    # Get the top N movie IDs
+    top_n_movie_ids = [pred.iid for pred in predictions[:n]]
+    
+    # Get the movie titles
+    top_n_movies = movies[movies['movieId'].isin(top_n_movie_ids)]
+    return top_n_movies
+
+# Create Flask app
+app = Flask(__name__)
+
+@app.route('/recommend', methods=['GET'])
+def recommend():
+    user_id = int(request.args.get('user_id'))
+    n = int(request.args.get('n', 10))
+    
+    top_n_movies = get_top_n_recommendations(user_id, n)
+    return jsonify(top_n_movies.to_dict(orient='records'))
+
+if __name__ == '__main__':
+    app.run(debug=True)
